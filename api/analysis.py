@@ -1,93 +1,163 @@
 import json
-import random
+import yfinance as yf
+import pandas as pd
+import numpy as np
 
-# Este backend simula o acesso a dados de mercado e a lógica de análise.
-# Em um ambiente real, você usaria bibliotecas como yfinance, pandas, e talib
-# para obter dados reais, calcular médias móveis (MMA9 e MMA20) e
-# analisar a tendência.
+# --- CONFIGURAÇÃO ---
+# Lista simulada de tickers do IBOV. Em um app real, seria obtida de uma API.
+IBOV_TICKERS = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "BBDC4.SA", "MGLU3.SA", "WEGE3.SA"] 
+DAYS_TO_FETCH = 40 # Período necessário para calcular a MMA20
+PERIOD_LOOKBACK = "2mo" # 2 meses de dados
+MMA_SHORT = 9
+MMA_LONG = 20
+THRESHOLD_PROXIMITY = 0.015 # 1.5% de proximidade da MMA20
 
-def get_simulated_stock_data():
+def calculate_setup_conditions(df: pd.DataFrame, ticker: str):
     """
-    Simula o processo de obter a lista de ações do IBOV e seus dados recentes.
-    Retorna uma lista de ações com análises simuladas.
-    """
-    # Ações simuladas do IBOV
-    tickers = ["PETR4", "VALE3", "ITUB4", "BBDC4", "MGLU3", "WEGE3", "PRIO3", "RENT3"]
+    Calcula as Médias Móveis (MMA9 e MMA20) e verifica as condições
+    para a estratégia Power Breakout.
     
-    analysis_results = []
+    A condição principal (simplificada) é:
+    1. O preço de fechamento está próximo da MMA20 (correção).
+    2. A MMS9 está cruzando ou está prestes a cruzar a MMA20 na direção da tendência.
+    
+    Retorna um dicionário com os resultados da análise.
+    """
+    if df.empty or len(df) < MMA_LONG:
+        return None, "Dados insuficientes"
 
-    for ticker in tickers:
-        # Simula o preço atual, MMS9, e MMS20
-        # Os valores são gerados para simular algumas ações em tendência e próximas da média.
-        base_price = round(random.uniform(15.0, 50.0), 2)
-        
-        # Simula se a ação está em ponto de interesse (próxima da MMS20)
-        is_close_to_mms20 = random.random() < 0.6  # 60% de chance de estar perto
-        
-        if is_close_to_mms20:
-            # Perto da MMS20, em tendência de alta simulada
-            mms20 = base_price * random.uniform(0.99, 1.01) # +- 1% da MMS20
-            # Simula gatilho de entrada (MMS9 cruzando para cima da MMS20)
-            mms9 = mms20 * random.uniform(1.005, 1.02)
+    # 1. Cálculo das Médias Móveis
+    df['MMA9'] = df['Close'].rolling(window=MMA_SHORT).mean()
+    df['MMA20'] = df['Close'].rolling(window=MMA_LONG).mean()
+
+    # Pega o último dia (mais recente)
+    latest = df.iloc[-1]
+    
+    current_price = latest['Close']
+    mms9 = latest['MMA9']
+    mms20 = latest['MMA20']
+
+    # 2. Definição da Tendência (Simplificada: MMA20 ascendente ou descendente)
+    # Compara a MMA20 de 5 dias atrás com a atual
+    if len(df) >= MMA_LONG + 5:
+        mms20_past = df.iloc[-5]['MMA20']
+        if mms20 > mms20_past * 1.002: # MMA20 subindo > 0.2% em 5 dias
             trend = "Alta"
+        elif mms20 < mms20_past * 0.998: # MMA20 caindo > 0.2% em 5 dias
+            trend = "Baixa"
         else:
-            # Em tendência mais definida, longe da MMS20
-            trend_multiplier = random.choice([1.15, 0.85]) # 15% acima (alta) ou abaixo (baixa)
-            mms20 = base_price * trend_multiplier
-            mms9 = mms20 * random.uniform(0.98, 1.01) # MMS9 perto da MMS20
-            trend = "Baixa" if trend_multiplier < 1 else "Alta"
+            trend = "Lateral"
+    else:
+        trend = "Indefinida"
 
-        # Simula o ponto de entrada, alvo e stop loss (para o frontend traçar)
-        # Se for um ponto de interesse, simula o gatilho de entrada e os níveis.
-        entry_price = round(base_price, 2)
-        target_price = round(entry_price * 1.05, 2)
-        stop_loss_price = round(entry_price * 0.95, 2)
+    # 3. Verificação da Proximidade à MMA20 (Correção)
+    price_proximity_to_mms20 = abs(current_price - mms20) / mms20
+    is_close_to_mms20 = price_proximity_to_mms20 <= THRESHOLD_PROXIMITY
+    
+    # 4. Simulação de Gatilho e Níveis (Muito Simplificada para o propósito do App)
+    is_setup_candidate = is_close_to_mms20 and trend != "Lateral"
 
-        action_data = {
-            "ticker": ticker,
-            "current_price": base_price,
-            "mms9": round(mms9, 2),
-            "mms20": round(mms20, 2),
-            "trend": trend,
-            "is_setup_candidate": is_close_to_mms20, # Próximo da média de 20 (Setup inicial)
-            "analysis_time": "2025-09-20T10:00:00Z",
-            # Níveis calculados se o gatilho fosse acionado agora
-            "entry_price": entry_price,
-            "target_price": target_price,
-            "stop_loss_price": stop_loss_price
-        }
-        analysis_results.append(action_data)
+    entry_price = None
+    target_price = None
+    stop_loss_price = None
+    
+    if is_setup_candidate:
+        # Se for Alta: Entrada = Fechamento acima da MMA9 (Simulado: 1% acima da MMA9)
+        if trend == "Alta":
+            entry_price = mms9 * 1.01
+            # Alvo (Topo Anterior Simulado) / Stop (Distância igual)
+            distance = entry_price * 0.05 # Risco de 5%
+            target_price = entry_price + distance
+            stop_loss_price = entry_price - distance
         
+        # Se for Baixa: Entrada = Fechamento abaixo da MMA9 (Simulado: 1% abaixo da MMA9)
+        elif trend == "Baixa":
+            entry_price = mms9 * 0.99
+            # Alvo (Fundo Anterior Simulado) / Stop (Distância igual)
+            distance = entry_price * 0.05 # Risco de 5%
+            target_price = entry_price - distance
+            stop_loss_price = entry_price + distance
+            
+        # Arredondar os preços
+        if entry_price:
+            entry_price = round(entry_price, 2)
+            target_price = round(target_price, 2)
+            stop_loss_price = round(stop_loss_price, 2)
+
+
+    return {
+        "ticker": ticker.replace(".SA", ""),
+        "current_price": round(current_price, 2),
+        "mms9": round(mms9, 2),
+        "mms20": round(mms20, 2),
+        "trend": trend,
+        "is_setup_candidate": is_setup_candidate, 
+        "analysis_time": pd.to_datetime('now').isoformat(),
+        "entry_price": entry_price,
+        "target_price": target_price,
+        "stop_loss_price": stop_loss_price,
+    }, None
+
+def analyze_ibov_stocks():
+    """
+    Busca os dados de mercado e aplica a análise em todas as ações do IBOV.
+    """
+    analysis_results = []
+    
+    for ticker in IBOV_TICKERS:
+        try:
+            # 1. Busca os dados históricos
+            stock = yf.Ticker(ticker)
+            # Usa "Close" para evitar o erro de 'adj close' ser nulo em alguns casos
+            df = stock.history(period=PERIOD_LOOKBACK, interval="1d")[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+
+            # 2. Executa a análise
+            result, error = calculate_setup_conditions(df, ticker)
+            
+            if result:
+                analysis_results.append(result)
+            elif error:
+                print(f"Erro na análise de {ticker}: {error}")
+            
+        except Exception as e:
+            print(f"Erro ao buscar dados para {ticker}: {e}")
+            # Em caso de erro, adiciona um placeholder
+            analysis_results.append({
+                "ticker": ticker.replace(".SA", ""),
+                "current_price": 0.0, "mms9": 0.0, "mms20": 0.0,
+                "trend": "Erro", "is_setup_candidate": False, 
+                "analysis_time": pd.to_datetime('now').isoformat(),
+                "entry_price": None, "target_price": None, "stop_loss_price": None
+            })
+            continue
+
     return analysis_results
 
 def handler(event, context):
     """
-    Função principal que a Vercel chamará.
-    O `event` (vindo do fetch no frontend) não é usado neste caso simples.
+    Função principal que a Vercel chamará (Serverless Function).
     """
     try:
-        data = get_simulated_stock_data()
+        data = analyze_ibov_stocks()
         
-        # O backend da Vercel retornaria o JSON desta forma.
         return {
             "statusCode": 200,
             "headers": {
                 "Content-Type": "application/json",
-                # Necessário para CORS no ambiente de desenvolvimento/teste
+                # Necessário para CORS
                 "Access-Control-Allow-Origin": "*" 
             },
             "body": json.dumps(data)
         }
     except Exception as e:
+        print(f"Erro no handler: {e}")
         return {
             "statusCode": 500,
             "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": str(e)})
+            "body": json.dumps({"error": f"Erro interno: {str(e)}"})
         }
 
-# Para testes locais ou para a Vercel reconhecer
 if __name__ == '__main__':
-    print(json.dumps(get_simulated_stock_data(), indent=2))
-elif 'vercel' in json.dumps(getattr(handler, '__globals__', {})):
-    # Simula a exportação para o ambiente Vercel
-    pass # A Vercel usará o `handler`
+    # Teste de execução local
+    results = analyze_ibov_stocks()
+    print(json.dumps(results, indent=2))
