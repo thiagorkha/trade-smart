@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 
 # --- CONFIGURAÇÃO ---
-# Lista simulada de tickers do IBOV. Reduzida para evitar timeout em cold start.
-IBOV_TICKERS = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "MGLU3.SA"] 
+# Lista simulada de tickers do IBOV. ***AJUSTADO: Reduzido para apenas 1 ticker para máxima estabilidade***
+IBOV_TICKERS = ["PETR4.SA"] 
 DAYS_TO_FETCH = 40 # Período necessário para calcular a MMA20
-PERIOD_LOOKBACK = "1mo" # ***AJUSTADO: Reduzido para 1 mês de dados para maior velocidade***
+PERIOD_LOOKBACK = "1mo" # Reduzido para 1 mês de dados para maior velocidade
 MMA_SHORT = 9
 MMA_LONG = 20
 THRESHOLD_PROXIMITY = 0.015 # 1.5% de proximidade da MMA20
@@ -24,7 +24,7 @@ def calculate_setup_conditions(df: pd.DataFrame, ticker: str):
     Retorna um dicionário com os resultados da análise.
     """
     if df.empty or len(df) < MMA_LONG:
-        return None, "Dados insuficientes"
+        return None, "Dados insuficientes ou insuficientes para MMA20"
 
     # 1. Cálculo das Médias Móveis
     df['MMA9'] = df['Close'].rolling(window=MMA_SHORT).mean()
@@ -111,6 +111,10 @@ def analyze_ibov_stocks():
             # Usa "Close" para evitar o erro de 'adj close' ser nulo em alguns casos
             df = stock.history(period=PERIOD_LOOKBACK, interval="1d")[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
 
+            # ***VERIFICAÇÃO ADICIONAL DE DADOS***
+            if df.empty:
+                raise ValueError(f"Dados vazios retornados pelo yfinance para {ticker}.")
+            
             # 2. Executa a análise
             result, error = calculate_setup_conditions(df, ticker)
             
@@ -153,10 +157,11 @@ def handler(event, context):
         }
     except Exception as e:
         print(f"Erro no handler: {e}")
+        # Retorna um erro 500 mais detalhado
         return {
             "statusCode": 500,
             "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": f"Erro interno: {str(e)}"})
+            "body": json.dumps({"error": f"Erro interno do servidor: {str(e)}. Verifique os logs da Vercel para detalhes."})
         }
 
 if __name__ == '__main__':
