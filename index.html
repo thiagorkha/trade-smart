@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisador de Estratégias de Ações</title>
+    <!-- Configuração PWA (O manifest.json e service-worker.js devem ser criados separadamente) -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#10b981">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilo para garantir a altura total e cores de fundo */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .app-container {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .canvas-container {
+            border: 2px solid #e5e7eb;
+            background-color: #ffffff;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            position: relative;
+        }
+        /* Estilos de botão personalizados para o efeito "bubble" */
+        .btn-strategy {
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+        .btn-strategy:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3), 0 4px 6px -4px rgba(16, 185, 129, 0.2);
+        }
+        /* Estilo para a mensagem de carregamento */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #10b981;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="app" class="app-container max-w-4xl mx-auto p-4 sm:p-6">
+        
+        <!-- Cabeçalho Fixo -->
+        <header class="bg-white shadow-md rounded-lg p-4 mb-6 sticky top-0 z-10">
+            <h1 class="text-2xl font-bold text-emerald-600">Smart Trader</h1>
+            <p class="text-sm text-gray-500">Análise de Estratégias de Ações - PWA</p>
+        </header>
+
+        <!-- Container principal de visualizações -->
+        <main id="main-content" class="flex-grow">
+            <!-- Tela Inicial: Seleção de Estratégias -->
+            <section id="strategy-selection" class="space-y-4">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Selecione a Estratégia de Análise</h2>
+                
+                <button onclick="showStrategy('power-breakout')" class="btn-strategy w-full py-4 px-6 bg-emerald-500 text-white rounded-xl text-lg font-bold hover:bg-emerald-600 focus:outline-none focus:ring-4 focus:ring-emerald-300 transition duration-150 ease-in-out">
+                    Power Breakout na Média de 20
+                </button>
+
+                <button class="btn-strategy w-full py-4 px-6 bg-gray-400 text-white rounded-xl text-lg font-bold cursor-not-allowed">
+                    Estratégia 2 (Em Breve)
+                </button>
+            </section>
+
+            <!-- Tela de Análise: Power Breakout -->
+            <section id="power-breakout" class="hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-700">Power Breakout (MMA20)</h2>
+                    <button onclick="goHome()" class="text-emerald-600 hover:text-emerald-800 font-medium text-sm">
+                        &larr; Voltar
+                    </button>
+                </div>
+
+                <!-- Lista de Ações Candidatas -->
+                <div class="bg-white p-4 rounded-lg shadow mb-6">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-medium text-gray-800">Candidatas IBOV (Próximas da MMA20)</h3>
+                        <div id="loading-indicator" class="loader hidden"></div>
+                    </div>
+                    
+                    <div id="candidates-list" class="space-y-2 max-h-60 overflow-y-auto">
+                        <p class="text-gray-500">Carregando dados...</p>
+                    </div>
+                </div>
+
+                <!-- Painel de Gráfico e Níveis -->
+                <div id="chart-panel" class="bg-white p-4 rounded-lg shadow hidden">
+                    <h3 id="chart-title" class="text-lg font-bold text-center text-gray-800 mb-4">Selecione uma ação para visualizar o gráfico.</h3>
+                    
+                    <div class="canvas-container w-full h-80 mb-4">
+                        <canvas id="strategy-chart" class="w-full h-full"></canvas>
+                        <!-- Mensagem de sobreposição no canvas -->
+                        <div id="chart-message" class="absolute inset-0 flex items-center justify-center text-gray-400 text-xl pointer-events-none">
+                            Gráfico de Análise
+                        </div>
+                    </div>
+
+                    <!-- Detalhes do Setup -->
+                    <div id="setup-details" class="grid grid-cols-2 gap-4 text-sm font-medium">
+                        <div class="p-3 bg-red-50 border-l-4 border-red-500 rounded-lg">
+                            <p class="text-red-700">Stop Loss:</p>
+                            <p id="stop-loss-value" class="text-red-900 font-bold">-</p>
+                        </div>
+                        <div class="p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg">
+                            <p class="text-emerald-700">Preço de Entrada:</p>
+                            <p id="entry-price-value" class="text-emerald-900 font-bold">-</p>
+                        </div>
+                        <div class="p-3 bg-blue-50 border-l-4 border-blue-500 rounded-lg col-span-2">
+                            <p class="text-blue-700">Take Profit (Alvo):</p>
+                            <p id="take-profit-value" class="text-blue-900 font-bold">-</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // --- VARIÁVEIS GLOBAIS ---
+        const API_BASE_URL = window.location.origin.includes('localhost') 
+            ? 'http://localhost:3000/api/analysis' // Use seu endpoint local se estiver desenvolvendo
+            : '/api/analysis'; // Endpoint Vercel (api/analysis.py)
+
+        let stockData = [];
+        let canvas, ctx;
+        
+        // --- FUNÇÕES DE NAVEGAÇÃO ---
+        function showStrategy(strategyId) {
+            document.getElementById('strategy-selection').classList.add('hidden');
+            const strategySection = document.getElementById(strategyId);
+            if (strategySection) {
+                strategySection.classList.remove('hidden');
+                // Se for a tela de Power Breakout, iniciar a busca de dados
+                if (strategyId === 'power-breakout') {
+                    fetchStockData();
+                }
+            }
+        }
+
+        function goHome() {
+            document.getElementById('power-breakout').classList.add('hidden');
+            document.getElementById('strategy-selection').classList.remove('hidden');
+            // Limpa o painel do gráfico ao voltar para a home
+            document.getElementById('chart-panel').classList.add('hidden');
+            document.getElementById('chart-title').textContent = 'Selecione uma ação para visualizar o gráfico.';
+        }
+
+        // --- LÓGICA DO BACKEND (FETCH) ---
+        async function fetchStockData() {
+            const listContainer = document.getElementById('candidates-list');
+            const loadingIndicator = document.getElementById('loading-indicator');
+            listContainer.innerHTML = '';
+            loadingIndicator.classList.remove('hidden');
+
+            try {
+                // Implementação de Backoff Exponencial para a chamada API
+                const maxRetries = 3;
+                let response;
+                
+                for (let i = 0; i < maxRetries; i++) {
+                    response = await fetch(API_BASE_URL, {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+
+                    if (response.ok) {
+                        break; // Sucesso, sair do loop
+                    }
+
+                    if (i < maxRetries - 1) {
+                        const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw new Error(`Falha após ${maxRetries} tentativas.`);
+                    }
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Erro de rede: ${response.statusText}`);
+                }
+
+                const rawData = await response.json();
+                
+                // O JSON do body da Vercel vem como uma string, precisamos parseá-lo
+                const data = JSON.parse(rawData.body);
+                stockData = data;
+                renderCandidateList(data);
+
+            } catch (error) {
+                console.error("Erro ao buscar dados do backend:", error);
+                listContainer.innerHTML = `<p class="text-red-500">Erro ao carregar dados: ${error.message}. Verifique a API.</p>`;
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        // --- LÓGICA DE RENDERIZAÇÃO DA UI ---
+
+        function renderCandidateList(data) {
+            const listContainer = document.getElementById('candidates-list');
+            listContainer.innerHTML = '';
+            
+            const candidates = data.filter(s => s.is_setup_candidate);
+
+            if (candidates.length === 0) {
+                listContainer.innerHTML = '<p class="text-gray-500">Nenhuma ação atende ao critério inicial (Próxima da MMA20).</p>';
+                return;
+            }
+
+            candidates.forEach(stock => {
+                const button = document.createElement('button');
+                button.className = 'w-full text-left py-2 px-3 border border-gray-200 rounded-lg hover:bg-emerald-50 transition duration-100 flex justify-between items-center';
+                button.innerHTML = `
+                    <span class="font-semibold text-gray-800">${stock.ticker}</span>
+                    <span class="text-xs ${stock.trend === 'Alta' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'} px-2 py-0.5 rounded-full">${stock.trend}</span>
+                `;
+                button.onclick = () => selectStock(stock);
+                listContainer.appendChild(button);
+            });
+        }
+
+        function selectStock(stock) {
+            document.getElementById('chart-panel').classList.remove('hidden');
+            document.getElementById('chart-title').textContent = `${stock.ticker} - Análise Power Breakout (${stock.trend})`;
+            
+            // Atualiza os valores do painel de detalhes
+            document.getElementById('entry-price-value').textContent = `R$ ${stock.entry_price.toFixed(2)}`;
+            document.getElementById('stop-loss-value').textContent = `R$ ${stock.stop_loss_price.toFixed(2)}`;
+            document.getElementById('take-profit-value').textContent = `R$ ${stock.target_price.toFixed(2)}`;
+
+            // Chama a função para desenhar o gráfico com os níveis
+            drawStrategyChart(stock);
+        }
+        
+        // --- LÓGICA DE DESENHO DO GRÁFICO (Canvas) ---
+
+        function initChart() {
+            canvas = document.getElementById('strategy-chart');
+            ctx = canvas.getContext('2d');
+            
+            // Ajusta o tamanho do canvas para o tamanho do contêiner (responsividade básica)
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        function drawStrategyChart(stock) {
+            if (!ctx) initChart();
+
+            // Limpa o canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('chart-message').classList.add('hidden');
+
+            const W = canvas.width;
+            const H = canvas.height;
+            const PADDING = 20;
+            const PLOT_W = W - 2 * PADDING;
+            const PLOT_H = H - 2 * PADDING;
+
+            // 1. Definição da Escala de Preço
+            const allPrices = [
+                stock.current_price, stock.mms9, stock.mms20, 
+                stock.entry_price, stock.stop_loss_price, stock.target_price
+            ].sort((a, b) => a - b);
+            
+            const minPrice = allPrices[0] * 0.95; // 5% abaixo do mínimo
+            const maxPrice = allPrices[allPrices.length - 1] * 1.05; // 5% acima do máximo
+            const priceRange = maxPrice - minPrice;
+
+            const getY = (price) => PADDING + PLOT_H - ((price - minPrice) / priceRange) * PLOT_H;
+
+            // 2. Simulação de 10 "Candles" de preço (Pontos no Tempo)
+            const numPoints = 10;
+            const points = [];
+            let current_sim_price = stock.mms20; // Começa na média de 20 para mostrar a correção
+            const step_x = PLOT_W / (numPoints - 1);
+
+            for (let i = 0; i < numPoints; i++) {
+                const x = PADDING + i * step_x;
+                // Simulação de volatilidade leve ao redor da MMS20
+                current_sim_price *= random.uniform(0.995, 1.005);
+                points.push({ x, y: getY(current_sim_price) });
+            }
+
+            // 3. Desenha a Linha de Preço Simulada (Ação)
+            ctx.strokeStyle = '#374151'; // Cinza escuro
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            points.forEach((p, i) => {
+                if (i === 0) {
+                    ctx.moveTo(p.x, p.y);
+                } else {
+                    ctx.lineTo(p.x, p.y);
+                }
+            });
+            ctx.stroke();
+
+            // 4. Desenha as Médias Móveis (MMA20 e MMA9)
+            // MMA20 (Suporte/Resistência - Base da Estratégia)
+            const yMMS20 = getY(stock.mms20);
+            ctx.strokeStyle = '#f59e0b'; // Laranja
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]); // Linha tracejada
+            ctx.beginPath();
+            ctx.moveTo(PADDING, yMMS20);
+            ctx.lineTo(W - PADDING, yMMS20);
+            ctx.stroke();
+            
+            // MMA9 (Gatilho)
+            const yMMS9 = getY(stock.mms9);
+            ctx.strokeStyle = '#3b82f6'; // Azul
+            ctx.lineWidth = 2;
+            ctx.setLineDash([0, 0]); // Linha sólida
+            ctx.beginPath();
+            ctx.moveTo(PADDING, yMMS9);
+            ctx.lineTo(W - PADDING, yMMS9);
+            ctx.stroke();
+            
+            // 5. Desenha os Níveis de Trade (Gatilho, Stop, Alvo)
+            ctx.setLineDash([2, 4]); // Linha pontilhada
+
+            // Linha de Entrada (Preço de Entrada - Verde)
+            const yEntry = getY(stock.entry_price);
+            ctx.strokeStyle = '#10b981'; 
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, yEntry);
+            ctx.lineTo(W - PADDING, yEntry);
+            ctx.stroke();
+            
+            // Linha de Stop Loss (Vermelho)
+            const yStop = getY(stock.stop_loss_price);
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, yStop);
+            ctx.lineTo(W - PADDING, yStop);
+            ctx.stroke();
+            
+            // Linha de Take Profit (Alvo - Azul)
+            const yTarget = getY(stock.target_price);
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(PADDING, yTarget);
+            ctx.lineTo(W - PADDING, yTarget);
+            ctx.stroke();
+
+            ctx.setLineDash([0, 0]); // Resetar para linha sólida
+
+            // 6. Legendas (Eixos de Preço)
+            ctx.fillStyle = '#4b5563';
+            ctx.font = '10px sans-serif';
+
+            // Legenda dos Níveis
+            const drawLabel = (price, color, label) => {
+                const y = getY(price);
+                ctx.fillStyle = color;
+                ctx.fillRect(W - PADDING + 5, y - 6, 40, 12);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(price.toFixed(2), W - PADDING + 8, y + 3);
+
+                ctx.fillStyle = '#4b5563';
+                ctx.fillText(label, 5, y + 3);
+            };
+
+            // Desenhar os pontos e legendas
+            drawLabel(stock.target_price, '#3b82f6', 'Alvo');
+            drawLabel(stock.entry_price, '#10b981', 'Entrada');
+            drawLabel(stock.mms9, '#3b82f6', 'MMA9');
+            drawLabel(stock.mms20, '#f59e0b', 'MMA20');
+            drawLabel(stock.stop_loss_price, '#ef4444', 'Stop');
+
+            // Ponto de preço atual
+            ctx.fillStyle = '#059669';
+            ctx.beginPath();
+            ctx.arc(points[numPoints - 1].x, points[numPoints - 1].y, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // --- LÓGICA DE INICIALIZAÇÃO E PWA ---
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Inicializa o canvas
+            initChart();
+
+            // Lógica para registrar o Service Worker (necessário para o PWA)
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('/service-worker.js').then(registration => {
+                        console.log('Service Worker registrado com sucesso:', registration.scope);
+                    }).catch(err => {
+                        console.log('Falha no registro do Service Worker:', err);
+                    });
+                });
+            } else {
+                console.warn("Service Workers não suportados neste navegador.");
+            }
+        });
+        
+        // Função utilitária para a simulação de dados
+        const random = {
+            uniform: (min, max) => Math.random() * (max - min) + min
+        };
+
+    </script>
+</body>
+</html>
