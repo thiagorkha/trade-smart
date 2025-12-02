@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 
 # --- CONFIGURAÇÃO ---
-# Lista simulada de tickers do IBOV. Em um app real, seria obtida de uma API.
-IBOV_TICKERS = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "BBDC4.SA", "MGLU3.SA", "WEGE3.SA"] 
+# Lista simulada de tickers do IBOV. Reduzida para evitar timeout em cold start.
+IBOV_TICKERS = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "MGLU3.SA"] 
 DAYS_TO_FETCH = 40 # Período necessário para calcular a MMA20
-PERIOD_LOOKBACK = "2mo" # 2 meses de dados
+PERIOD_LOOKBACK = "1mo" # ***AJUSTADO: Reduzido para 1 mês de dados para maior velocidade***
 MMA_SHORT = 9
 MMA_LONG = 20
 THRESHOLD_PROXIMITY = 0.015 # 1.5% de proximidade da MMA20
@@ -117,9 +117,11 @@ def analyze_ibov_stocks():
             if result:
                 analysis_results.append(result)
             elif error:
+                # Logar o erro na Vercel (será visível nos logs)
                 print(f"Erro na análise de {ticker}: {error}")
             
         except Exception as e:
+            # Logar erro de rede/yfinance
             print(f"Erro ao buscar dados para {ticker}: {e}")
             # Em caso de erro, adiciona um placeholder
             analysis_results.append({
